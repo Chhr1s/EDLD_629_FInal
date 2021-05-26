@@ -5,6 +5,206 @@ date: "5/24/2021"
 output: html_document
 ---
 
+Definitely:
+
+o	number of level 1 units, 
+o	number of level 2 units, 
+o	magnitude of interaction effect, 
+o	comparing these models to the equivalent model in lmer/nlme that doesn’t look for parameter instability
+
+Maybe:
+
+o	cross-level interaction vs. same-level interaction, (probably lower power for cross level)
+o	ICC, 
+o	continuous vs. categorical interaction terms, 
+o	number of level 3 units,
+o	nested vs. cross-classified designs, 
+o	continuous vs. categorical outcomes, 
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+## https://benwhalley.github.io/just-enough-r/power-analysis.html
+```
+
+```{r}
+library(tidyverse)
+library(lme4)
+library(equatiomatic)
+library(sundry)
+library(glmertree)
+#library(simr)
+source('Scripts/functions_EDLD629_Final.R')
+```
+
+## simulate multilevel data
+
+```{r}
+dat <-
+  simulate_two_level(
+  n = 100, 
+  j = 50, 
+  intercept_lv1 = 12.66, 
+  interaction = 5.00,
+  main_x = 1.00, 
+  main_z = 2.00,
+  residual_var_sd_lv1 = 6.09,
+  random_int_mean_lv2 = 5, 
+  random_int_sd_lv2 = 2.18, 
+  start_seed = 123
+  )
+
+#dat %>% psych::describe()
+```
+
+```{r}
+## ns = list of number of students 
+ns <- 
+  c(
+    seq(10, 100, 10), 
+    seq(200, 1000, 100), 
+    2000
+    )
+
+## js = list of number of schools 
+js <- c(
+  seq(10, 100, 10)
+  )
+
+# ## ks = list of number of districts 
+# ks <- c(
+#   seq(10, 100, 10)
+#   )
+
+```
+
+```{r}
+tree1 <- 
+  lmertree(
+  data = dat, 
+  formula = 
+    score ~ 
+    x_lv1 |
+    (1 | scid) | 
+    z_lv1, 
+  bonferroni = T,
+  alpha = 0.001
+)
+```
+
+```{r}
+tree2 <- 
+  lmertree(
+  data = dat, 
+  formula = 
+    score ~ 
+    x_lv1 + z_lv1 |
+    (1 | scid) | 
+    z_lv1, 
+  bonferroni = T,
+  alpha = 0.001
+)
+```
+
+```{r}
+coef(tree1)
+
+sum1 <- 
+  summary(tree1$tree)[[1]]
+
+coef(sum1)
+
+sum11 <- 
+  sum1$coefficients
+
+temp <- 
+  summary(tree1$tree)[[1]][['coefficients']]
+
+plot(tree1)
+coef(tree1)
+
+arm::se.coef(tree1$tree)$fixef
+```
+
+```{r}
+lmer1 <- 
+  lmer(
+  data = dat, 
+  formula = 
+    score ~ 
+    x_lv1*z_lv1 + (1 | scid)
+)
+summary(lmer1)
+```
+
+```{r}
+rmse(tree1)
+rmse(lmer1)
+AIC(tree1)
+AIC(lmer1)
+BIC(tree1)
+BIC(lmer1)
+```
+
+```{r}
+get_node_counts(tree1) 
+```
+
+```{r}
+extract_node_splits(tree1)
+```
+
+```{r}
+get_number_of_nodes(tree1)
+```
+
+```{r}
+extract_variable_ranges(glmertree_mod = tree1)
+```
+
+
+
+```{r}
+tree1$data %>% 
+  mutate(
+    node = .tree, 
+    prediction = predict(tree1), 
+    id = 1:nrow(.)
+    ) %>% 
+  ggplot(
+    aes(x = x_lv1, y = prediction, color = node)
+  ) +
+  geom_point(
+    #aes(size = abs(prediction - score)), 
+    alpha = 0.2
+    ) +
+  geom_smooth(method = 'lm', se = F, color = 'black', aes(group = node)) +
+  geom_smooth(
+    inherit.aes = F, 
+    aes(x = x_lv1, y = prediction), 
+    color = 'black', 
+    se = F, 
+    method = 'loess')
+```
+
+```{r}
+tree1$data %>% 
+  mutate(
+    node = .tree, 
+    prediction = predict(tree1), 
+    id = 1:nrow(.)
+    ) %>% 
+  ggplot(
+    aes(x = z_lv1, y = prediction, color = node)
+  ) +
+  geom_point(
+    #aes(size = abs(prediction - score)), 
+    alpha = 0.2
+    ) +
+  geom_smooth(method = 'lm', se = F, color = 'black', aes(group = node)) +
+  geom_smooth(
+    inherit.aes = F, 
+    aes(x = z_lv1, y = prediction), 
+    color = 'black', 
+    se = F, 
+    method = 'loess')
 ```
