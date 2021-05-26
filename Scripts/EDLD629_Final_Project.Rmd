@@ -40,41 +40,20 @@ source('Scripts/functions_EDLD629_Final.R')
 
 ```{r}
 dat <-
-  simulate_two_level(
+  simulate_two_level_interaction(
   n = 100, 
   j = 50, 
-  intercept_lv1 = 12.66, 
+  intercept_lv1 = 10.00, 
   interaction = 5.00,
   main_x = 1.00, 
   main_z = 2.00,
-  residual_var_sd_lv1 = 6.09,
+  residual_var_sd_lv1 = 6.00,
   random_int_mean_lv2 = 5, 
-  random_int_sd_lv2 = 2.18, 
+  random_int_sd_lv2 = 2.00, 
   start_seed = 123
   )
 
 #dat %>% psych::describe()
-```
-
-```{r}
-## ns = list of number of students 
-ns <- 
-  c(
-    seq(10, 100, 10), 
-    seq(200, 1000, 100), 
-    2000
-    )
-
-## js = list of number of schools 
-js <- c(
-  seq(10, 100, 10)
-  )
-
-# ## ks = list of number of districts 
-# ks <- c(
-#   seq(10, 100, 10)
-#   )
-
 ```
 
 ```{r}
@@ -208,3 +187,72 @@ tree1$data %>%
     se = F, 
     method = 'loess')
 ```
+
+
+```{r}
+library(dials)
+
+ns_param <- 
+  new_quant_param(
+    type = "integer",
+    range = c(10, 2000),
+    inclusive = c(TRUE, TRUE),
+    trans = NULL,
+    label = c(ns_param = "number of level 1 units"),
+    finalize = NULL
+  )
+
+js_param <- 
+  new_quant_param(
+    type = "integer",
+    range = c(10, 200),
+    inclusive = c(TRUE, TRUE),
+    trans = NULL,
+    label = c(js_param = "number of level 2 units"),
+    finalize = NULL
+  )
+
+intx_param <- 
+  new_quant_param(
+    type = "integer",
+    range = c(-3, 3),
+    inclusive = c(TRUE, TRUE),
+    trans = NULL,
+    label = c(intx_param = "interaction values"),
+    finalize = NULL
+  )
+```
+
+```{r}
+parameter_grid <- 
+  grid_max_entropy(
+  ns_param, 
+  js_param, 
+  intx_param,
+  size = 100,
+  original = FALSE)
+```
+
+```{r}
+## make 100 data sets with a space filling design to cover all of these
+sim_dat <-
+  pmap(
+    list(
+      parameter_grid$ns_param, 
+      parameter_grid$js_param, 
+      parameter_grid$intx_param), 
+    ~simulate_two_level_interaction(
+      n = ..1, 
+      j = ..2, 
+      intercept_lv1 = 10.00, 
+      interaction = ..3,
+      main_x = 1.00, 
+      main_z = 2.00,
+      residual_var_sd_lv1 = 6.00,
+      random_int_mean_lv2 = 5, 
+      random_int_sd_lv2 = 2.00, 
+      start_seed = 123
+      )
+  )
+```
+

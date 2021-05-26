@@ -2,7 +2,7 @@
 ## n = level 1; 
 ## j = level 2
 
-simulate_two_level <-
+simulate_two_level_interaction <-
   function(
     n, ## number level 1 units
     j, ## number level 2 units
