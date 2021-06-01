@@ -146,3 +146,295 @@ rmse <- function(model){
 
 
 #### function to extract variable ranges ####
+
+
+##### function for standard error #####
+
+se <- function(vector){
+  if (sum(is.na(vector)) > 0) {
+    vector <- na.omit(vector)
+    message('Missing')
+    sd(vector)/sqrt(length(vector))
+  }
+  else{
+  sd(vector)/sqrt(length(vector))
+  }
+}
+
+
+
+
+##### pool variance #####
+
+# pool_variance <- function(df1, df2, sd1, sd2){
+#   (df1*sd1^2 + df2*sd2^2)/(df1+df2)
+# }
+
+##### get standard errors from each regression coefficient #####
+get_standard_errors <- 
+  function(glmertree_mod){
+    map_dbl(summary(glmertree_mod$tree),~coef(.x)[, "Std. Error"][2])
+  }
+##### get number of fixed effects from each regression coefficient #####
+
+get_num_fixed_effects <- 
+  function(glmertree_mod){
+    map_dbl(summary(glmertree_mod$tree), ~nrow(coef(.x)))
+  }
+
+
+### function to get variances ####
+get_variances <- 
+  function(std_error, n){
+    (std_error*sqrt(n))^2
+  }
+
+#### helper function for pooling se #####
+
+# make_lag <- function(df){
+#   df %>% 
+#     mutate(
+#       se_lag = lag(se), 
+#       n_lag = lag(n)
+#     ) %>% 
+#     slice(-1)
+# }
+
+##### satterwaithe approximation of pooled SE for moderation effects ####
+
+se_of_moderation <- function(glmertree_mod){
+  
+  temp_list  <- rep(NA, get_number_of_nodes(glmertree_mod)-1)
+  
+  for (i in 1:(get_number_of_nodes(glmertree_mod)-1)){
+    temp_list [[i]] <- 
+      satterwaithe_pooled_se(
+        variance1 = get_variances(get_standard_errors(glmertree_mod)[[i]], get_node_counts(glmertree_mod)[,2][i]), 
+        n1 = get_node_counts(glmertree_mod)[,2][i], 
+        variance2 = get_variances(get_standard_errors(glmertree_mod)[[i+1]], get_node_counts(glmertree_mod)[,2][i+1]), 
+        n2 = get_node_counts(glmertree_mod)[,2][i+1]
+      )
+  }
+  temp_list 
+}
+
+##### function to get moderation estimate ####
+
+### the mean of satterwaithes standard error method here is a 
+### PLACEHOLDER until I get the satterwaithe and bootstrap
+get_glmertree_moderation <- 
+  function(glmertree_mod, which_variable, mean_only = T, return_all_differences = F){
+    
+    fixed_effects <- coef(glmertree_mod)[,which_variable]
+    
+    names(fixed_effects) <- NULL
+    
+    test_tibble <- 
+      data.frame(
+        fixed_effect = fixed_effects, 
+        lagged = lag(fixed_effects)
+      )
+    ### could use diff() instead of this method, too ###
+    ## diff() gives differences between this and lagged automatically
+    differences_in_slopes <-
+      unlist(pmap(
+        .l = list(
+          test_tibble[-1, 1], 
+          test_tibble[-1, 2]), 
+        .f = ~{
+          abs(abs(..1) - abs(..2))
+        }
+      ))
+    
+    if (mean_only == T){return(mean(differences_in_slopes))}
+    
+    output1 <- 
+      data.frame(
+        average_moderation = mean(differences_in_slopes), 
+        average_se_mod = mean(se_of_moderation(glmertree_mod = glmertree_mod))
+      )
+    
+    output2<- 
+      list(
+        average_moderation = mean(differences_in_slopes), 
+        diff_in_slopes = differences_in_slopes, 
+        se_moderation = se_of_moderation(glmertree_mod = glmertree_mod)
+      )
+    
+    if (return_all_differences == F){return(output1)}
+    
+    else {return(output2)}
+  }
+
+##### function to plot the fit of models #####
+
+plot_fits <- function(df){
+  
+  df %>% 
+    group_by(model, metric) %>% 
+    mutate(avg_perf = mean(performance)) %>% 
+    ungroup() %>% 
+    ggplot(
+      aes(x = performance)
+    ) + 
+    geom_density(
+      alpha = 0.2, 
+      aes(fill = model)
+    ) + 
+    geom_vline(aes(xintercept = avg_perf, color = model)) +
+    facet_wrap(~metric, scales = 'free') +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 30)) 
+  
+}
+
+
+##### function to plot the interaction estimate densities #####
+## i.e., dfs for interaction estimates and fits & plots for both
+
+plot_intx_ests <- function(df, intx_value){
+  
+  df %>% 
+    group_by(type) %>% 
+    mutate(average_effect = mean(estimate)) %>% 
+    ungroup() %>% 
+    ggplot(aes(estimate, fill = type)) + 
+    geom_density(alpha = 0.4) +
+    geom_vline(
+      aes(xintercept = average_effect, color = type),
+      size = 2
+    ) + 
+    geom_vline(
+      aes(xintercept = intx_value), 
+      lty = 2, 
+      size = 2
+    ) + 
+    theme_minimal() 
+}
+
+
+##### large function to make all needed output #####
+
+compare_mods <- function(sim_dat, intx_value){
+  
+  average_glmertree_moderation <- rep(NA, length(sim_dat))
+  average_lmer_moderation <- rep(NA, length(sim_dat))
+  lmer_t_value <- rep(NA, length(sim_dat))
+  glmertree_aic <- rep(NA, length(sim_dat))
+  lmer_aic <- rep(NA, length(sim_dat))
+  glmertree_bic <- rep(NA, length(sim_dat))
+  lmer_bic <- rep(NA, length(sim_dat))
+  glmertree_rmse <- rep(NA, length(sim_dat))
+  lmer_rmse <- rep(NA, length(sim_dat))
+  
+  for (i in 1:length(sim_dat)){
+    
+    
+    temp_tree <- 
+      lmertree(
+        data = sim_dat[[i]], 
+        formula = 
+          score ~ 
+          x_lv1 |
+          (1 | scid) | 
+          z_lv1, 
+        cluster = scid, 
+        bonferroni = T
+      )
+    
+    temp_lmer <- 
+      lmer(
+        data = sim_dat[[i]], 
+        formula = 
+          score ~ 
+          x_lv1*z_lv1 + (1 | scid)
+      )
+    
+    average_glmertree_moderation[i] <- 
+      get_glmertree_moderation(
+        temp_tree, 
+        which_variable = 'x_lv1', 
+        mean_only = T)
+    
+    average_lmer_moderation[i] <- 
+      fixef(temp_lmer)[4]
+    
+    lmer_t_value[[i]] <- 
+      summary(temp_lmer)$coefficients[[12]]
+    
+    glmertree_aic[i] <- AIC(temp_tree)
+    lmer_aic[i] <- AIC(temp_lmer)
+    glmertree_bic[i] <- BIC(temp_tree)
+    lmer_bic[i] <- BIC(temp_lmer)
+    glmertree_rmse[i] <- rmse(temp_tree)
+    lmer_rmse[i] <- rmse(temp_lmer)
+    
+    print(paste0('iteration #', i, ' complete', sep = ''))
+  }
+  
+  fits <- 
+    tibble(
+      model = 
+        c(
+          rep('tree', length(sim_dat)), 
+          rep('lmer', length(sim_dat)), 
+          rep('tree', length(sim_dat)), 
+          rep('lmer', length(sim_dat)), 
+          rep('tree', length(sim_dat)), 
+          rep('lmer', length(sim_dat))
+        ), 
+      metric = c(
+        rep('aic', 2*length(sim_dat)), 
+        rep('bic', 2*length(sim_dat)), 
+        rep('rmse', 2*length(sim_dat))
+      ),
+      performance = 
+        c(glmertree_aic, 
+          lmer_aic, 
+          glmertree_bic, 
+          lmer_bic, 
+          glmertree_rmse, 
+          lmer_rmse)
+    )
+  
+  fits_summary <- 
+    fits %>% 
+    group_by(model, metric) %>% 
+    summarize(
+      average_performance = mean(performance), 
+      se_performance = sd(performance)/sqrt(n())
+    ) %>% 
+    ungroup()
+  
+  intx_ests <- 
+    tibble(
+      index = rep(1:length(sim_dat), 2), 
+      type = c(
+        rep('mod_glmertree', length(sim_dat)), 
+        rep('mod_lmer', length(sim_dat))
+      ), 
+      estimate = 
+        c(average_glmertree_moderation, average_lmer_moderation)
+    )
+  
+  intx_summary <-
+    intx_ests %>% 
+    group_by(type) %>% 
+    summarize(
+      average_estimate = mean(estimate), 
+      se_estimate = sd(estimate)/sqrt(n())
+    ) %>% 
+    ungroup()
+  
+  output <- list(
+    interaction_summary = intx_summary, 
+    fits_summary = fits_summary,
+    interactions = intx_ests,
+    fits = fits,
+    plot_fits = plot_fits(fits), 
+    plot_intx_ests = 
+      plot_intx_ests(intx_ests, intx_value))
+  
+  return(output)
+  
+}

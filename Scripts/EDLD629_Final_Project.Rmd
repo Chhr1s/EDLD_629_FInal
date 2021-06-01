@@ -29,173 +29,19 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(tidyverse)
 library(lme4)
-library(equatiomatic)
-library(sundry)
+#library(equatiomatic)
+#library(sundry)
 library(glmertree)
 #library(simr)
-source('Scripts/functions_EDLD629_Final.R')
-```
-
-## simulate multilevel data
-
-```{r}
-dat <-
-  simulate_two_level_interaction(
-  n = 100, 
-  j = 50, 
-  intercept_lv1 = 10.00, 
-  interaction = 5.00,
-  main_x = 1.00, 
-  main_z = 2.00,
-  residual_var_sd_lv1 = 6.00,
-  random_int_mean_lv2 = 5, 
-  random_int_sd_lv2 = 2.00, 
-  start_seed = 123
-  )
-
-#dat %>% psych::describe()
-```
-
-```{r}
-tree1 <- 
-  lmertree(
-  data = dat, 
-  formula = 
-    score ~ 
-    x_lv1 |
-    (1 | scid) | 
-    z_lv1, 
-  bonferroni = T,
-  alpha = 0.001
-)
-```
-
-```{r}
-tree2 <- 
-  lmertree(
-  data = dat, 
-  formula = 
-    score ~ 
-    x_lv1 + z_lv1 |
-    (1 | scid) | 
-    z_lv1, 
-  bonferroni = T,
-  alpha = 0.001
-)
-```
-
-```{r}
-coef(tree1)
-
-sum1 <- 
-  summary(tree1$tree)[[1]]
-
-coef(sum1)
-
-sum11 <- 
-  sum1$coefficients
-
-temp <- 
-  summary(tree1$tree)[[1]][['coefficients']]
-
-plot(tree1)
-coef(tree1)
-
-arm::se.coef(tree1$tree)$fixef
-```
-
-```{r}
-lmer1 <- 
-  lmer(
-  data = dat, 
-  formula = 
-    score ~ 
-    x_lv1*z_lv1 + (1 | scid)
-)
-summary(lmer1)
-```
-
-```{r}
-rmse(tree1)
-rmse(lmer1)
-AIC(tree1)
-AIC(lmer1)
-BIC(tree1)
-BIC(lmer1)
-```
-
-```{r}
-get_node_counts(tree1) 
-```
-
-```{r}
-extract_node_splits(tree1)
-```
-
-```{r}
-get_number_of_nodes(tree1)
-```
-
-```{r}
-extract_variable_ranges(glmertree_mod = tree1)
-```
-
-
-
-```{r}
-tree1$data %>% 
-  mutate(
-    node = .tree, 
-    prediction = predict(tree1), 
-    id = 1:nrow(.)
-    ) %>% 
-  ggplot(
-    aes(x = x_lv1, y = prediction, color = node)
-  ) +
-  geom_point(
-    #aes(size = abs(prediction - score)), 
-    alpha = 0.2
-    ) +
-  geom_smooth(method = 'lm', se = F, color = 'black', aes(group = node)) +
-  geom_smooth(
-    inherit.aes = F, 
-    aes(x = x_lv1, y = prediction), 
-    color = 'black', 
-    se = F, 
-    method = 'loess')
-```
-
-```{r}
-tree1$data %>% 
-  mutate(
-    node = .tree, 
-    prediction = predict(tree1), 
-    id = 1:nrow(.)
-    ) %>% 
-  ggplot(
-    aes(x = z_lv1, y = prediction, color = node)
-  ) +
-  geom_point(
-    #aes(size = abs(prediction - score)), 
-    alpha = 0.2
-    ) +
-  geom_smooth(method = 'lm', se = F, color = 'black', aes(group = node)) +
-  geom_smooth(
-    inherit.aes = F, 
-    aes(x = z_lv1, y = prediction), 
-    color = 'black', 
-    se = F, 
-    method = 'loess')
-```
-
-
-```{r}
 library(dials)
+source(here::here('Scripts', 'functions_EDLD629_Final.R'))
+```
 
+```{r}
 ns_param <- 
   new_quant_param(
     type = "integer",
-    range = c(10, 2000),
+    range = c(20, 100),
     inclusive = c(TRUE, TRUE),
     trans = NULL,
     label = c(ns_param = "number of level 1 units"),
@@ -205,22 +51,22 @@ ns_param <-
 js_param <- 
   new_quant_param(
     type = "integer",
-    range = c(10, 200),
+    range = c(4, 10),
     inclusive = c(TRUE, TRUE),
     trans = NULL,
     label = c(js_param = "number of level 2 units"),
     finalize = NULL
   )
 
-intx_param <- 
-  new_quant_param(
-    type = "integer",
-    range = c(-3, 3),
-    inclusive = c(TRUE, TRUE),
-    trans = NULL,
-    label = c(intx_param = "interaction values"),
-    finalize = NULL
-  )
+# intx_param <- 
+#   new_quant_param(
+#     type = "integer",
+#     range = c(-3, 3),
+#     inclusive = c(TRUE, TRUE),
+#     trans = NULL,
+#     label = c(intx_param = "interaction values"),
+#     finalize = NULL
+#   )
 ```
 
 ```{r}
@@ -228,26 +74,29 @@ parameter_grid <-
   grid_max_entropy(
   ns_param, 
   js_param, 
-  intx_param,
-  size = 100,
+  size = 8,
   original = FALSE)
 ```
 
 ```{r}
-## make 100 data sets with a space filling design to cover all of these
+intx_values <- c(-2, -1, 0, 1, 2)
+
+intx_value <- 2.00
+
 sim_dat <-
   pmap(
     list(
       parameter_grid$ns_param, 
-      parameter_grid$js_param, 
-      parameter_grid$intx_param), 
+      parameter_grid$js_param
+      #parameter_grid$intx_param
+      ), 
     ~simulate_two_level_interaction(
       n = ..1, 
       j = ..2, 
       intercept_lv1 = 10.00, 
-      interaction = ..3,
-      main_x = 1.00, 
-      main_z = 2.00,
+      interaction = intx_value,
+      main_x = 1.25, 
+      main_z = 1.00,
       residual_var_sd_lv1 = 6.00,
       random_int_mean_lv2 = 5, 
       random_int_sd_lv2 = 2.00, 
@@ -255,4 +104,9 @@ sim_dat <-
       )
   )
 ```
+
+```{r}
+test <- compare_mods(sim_dat, 2.00)
+```
+
 

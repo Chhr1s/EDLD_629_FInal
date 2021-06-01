@@ -1,0 +1,390 @@
+---
+title: "Scratch Work"
+author: "Christopher Loan"
+date: "5/24/2021"
+output: html_document
+---
+
+Definitely:
+
+o	number of level 1 units, 
+o	number of level 2 units, 
+o	magnitude of interaction effect, 
+o	comparing these models to the equivalent model in lmer/nlme that doesn’t look for parameter instability
+
+Maybe:
+
+o	cross-level interaction vs. same-level interaction, (probably lower power for cross level)
+o	ICC, 
+o	continuous vs. categorical interaction terms, 
+o	number of level 3 units,
+o	nested vs. cross-classified designs, 
+o	continuous vs. categorical outcomes, 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+## https://benwhalley.github.io/just-enough-r/power-analysis.html
+```
+
+```{r}
+library(tidyverse)
+library(lme4)
+#library(equatiomatic)
+#library(sundry)
+library(glmertree)
+#library(simr)
+library(dials)
+source('Scripts/functions_EDLD629_Final.R')
+```
+
+## simulate multilevel data
+
+```{r}
+dat <-
+  simulate_two_level_interaction(
+  n = 50, 
+  j = 100, 
+  intercept_lv1 = 10.00, 
+  interaction = 2.00,
+  main_x = 0, 
+  # this makes the models more equivalent
+  main_z = 0,
+  residual_var_sd_lv1 = 6.00,
+  random_int_mean_lv2 = 5, 
+  random_int_sd_lv2 = 2.00, 
+  start_seed = 123
+  )
+
+#dat %>% psych::describe()
+```
+
+```{r}
+tree1 <- 
+  lmertree(
+  data = dat, 
+  formula = 
+    score ~ 
+    x_lv1 |
+    (1 | scid) | 
+    z_lv1, 
+  cluster = scid
+)
+
+get_glmertree_moderation(tree1, which_variable = 'x_lv1', mean_only = T)
+
+```
+
+```{r}
+lmer1 <- 
+  lmer(
+  data = dat, 
+  formula = 
+    score ~ 
+    x_lv1*z_lv1 + (1 | scid)
+)
+summary(lmer1)
+```
+
+```{r}
+tree2 <- 
+  lmertree(
+  data = dat, 
+  formula = 
+    score ~ 
+    x_lv1 + z_lv1 |
+    (1 | scid) | 
+    z_lv1, 
+  cluster = scid
+)
+```
+
+```{r}
+node_coefs <- tibble(
+  node = rownames(fixef(tree1)),
+  'fixed_intercept' = fixef(tree1)[, 1], 
+  'beta_x_lv1'= fixef(tree1)[, 2]#, 
+  #'beta_z_lv1'= fixef(tree1)[, 3]
+  )
+
+temp <- 
+  tree1$data %>% 
+  left_join(node_coefs, by = c('.tree' = 'node')) %>% 
+  mutate(
+    y_hat = predict(tree1), 
+    resid = residuals(tree1)
+    ) 
+
+# temp %>% 
+#   mutate(
+#     intercept = fixed_intercept + .ranef,
+#     mod = x_lv1*z_lv1,
+#     numerator = score - intercept - beta_x_lv1*x_lv1 - resid,
+#     estimated_intx = numerator/mod
+#     ) %>% 
+#   arrange(estimated_intx)
+#   #filter(.tree == 4)
+#   group_by(.tree) %>%
+#   summarize(
+#     average_intx = mean(estimated_intx),
+#     se_intx = sd(estimated_intx)/sqrt(n()))
+
+
+
+
+
+temp
+## this works, so I'm not sure why the other doesn't
+#(temp$y_hat - temp$intercept - temp$beta_x_lv1*temp$x_lv1)/(temp$x_lv1*temp$z_lv1)
+weighted.mean(x = temp$average_intx, w = get_node_counts(tree1)$n)
+plot(tree1, 'tree', ask=F)
+```
+
+```{r}
+tree1$lmer %>% summary()
+tree_temp <- 
+  tibble(
+    fixed_effects = fixef(tree1$lmer),
+    names = names(fixef(tree1$lmer))
+    ) %>% 
+  slice(
+    4:6
+  )
+
+weighted.mean(
+  tree_temp$fixed_effects, 
+  w = get_node_counts(tree1)$n
+  )
+
+sd(tree_temp$fixed_effects)/sqrt(length(get_node_counts(tree1)$n))
+
+
+avg_mod<- tibble(
+  fx = tree_temp$fixed_effects, 
+  fx2 = lag(fx)
+  ) %>% 
+  mutate(diff = fx2-fx) %>% 
+  pull(diff)
+
+mean(avg_mod,na.rm = T)
+sd(avg_mod, na.rm = T)/sqrt(length(avg_mod)-1)
+
+```
+
+```{r}
+tree2 <- 
+  lmertree(
+  data = dat, 
+  formula = 
+    score ~ 
+    x_lv1 + z_lv1 |
+    (1 | scid) | 
+    z_lv1, 
+  bonferroni = T,
+  alpha = 0.001
+)
+```
+
+```{r}
+
+temp_df <- 
+  tibble(
+    k = get_num_fixed_effects(tree1),
+    n = get_node_counts(tree1)[, 2],
+    se = get_standard_errors(tree1),
+    variance = get_variances(se, n),
+    node = names(k), 
+    ) %>% 
+  select(node, k, n , se, variance)
+
+#sqrt(((variance(se1, n1)^2)/n1) + ((variance(se2, n2)^2)/n2))
+
+# map2(
+#   .x = 
+#     get_variances(
+#       se = get_standard_errors(glmertree_mod),
+#       n = get_node_counts(glmertree_mod)[, 2]
+#       ), 
+#   .y = get_node_counts(glmertree_mod)[, 2], 
+#   )
+
+satterwaithe_pooled_se <- 
+  function(variance1, n1, variance2, n2){
+  sqrt((variance1)/n1 + (variance2)/n2)
+  }
+
+temp_pooled <- 
+  satterwaithe_pooled_se(
+    temp_df$variance[1], 
+    temp_df$n[1], 
+    temp_df$variance[2], 
+    temp_df$n[2])
+
+pooled_se_df <- 
+  tibble(
+    se = temp_pooled,
+    new_n = temp_df$n[1] + temp_df$n[2], 
+  ) %>% 
+  bind_rows(temp_df[2:nrow(temp_df),])
+
+
+
+
+```
+
+
+```{r}
+temp_df
+```
+
+
+```{r}
+lmer1 <- 
+  lmer(
+  data = dat, 
+  formula = 
+    score ~ 
+    x_lv1*z_lv1 + (1 | scid)
+)
+summary(lmer1)
+```
+
+```{r}
+rmse(tree1)
+rmse(lmer1)
+AIC(tree1)
+AIC(lmer1)
+BIC(tree1)
+BIC(lmer1)
+```
+
+```{r}
+get_node_counts(tree1) 
+```
+
+```{r}
+extract_node_splits(tree1)
+```
+
+```{r}
+get_number_of_nodes(tree1)
+```
+
+```{r}
+extract_variable_ranges(glmertree_mod = tree1)
+```
+
+```{r}
+tree1$data %>% 
+  mutate(
+    node = .tree, 
+    prediction = predict(tree1), 
+    id = 1:nrow(.)
+    ) %>% 
+  ggplot(
+    aes(x = x_lv1, y = prediction, color = node)
+  ) +
+  geom_point(
+    #aes(size = abs(prediction - score)), 
+    alpha = 0.2
+    ) +
+  geom_smooth(method = 'lm', se = F, color = 'black', aes(group = node)) +
+  # geom_smooth(
+  #   inherit.aes = F, 
+  #   aes(x = x_lv1, y = prediction), 
+  #   color = 'black', 
+  #   se = F, 
+  #   method = 'loess') + 
+  facet_wrap(~node)
+```
+
+```{r}
+tree1$data %>% 
+  mutate(
+    node = .tree, 
+    prediction = predict(tree1), 
+    id = 1:nrow(.)
+    ) %>% 
+  ggplot(
+    aes(x = z_lv1, y = prediction, color = node)
+  ) +
+  geom_point(
+    #aes(size = abs(prediction - score)), 
+    alpha = 0.2
+    ) +
+  geom_smooth(method = 'lm', se = F, color = 'black', aes(group = node)) +
+  geom_smooth(
+    inherit.aes = F, 
+    aes(x = z_lv1, y = prediction), 
+    color = 'black', 
+    se = F, 
+    method = 'loess')
+```
+
+
+```{r}
+
+
+ns_param <- 
+  new_quant_param(
+    type = "integer",
+    range = c(10, 2000),
+    inclusive = c(TRUE, TRUE),
+    trans = NULL,
+    label = c(ns_param = "number of level 1 units"),
+    finalize = NULL
+  )
+
+js_param <- 
+  new_quant_param(
+    type = "integer",
+    range = c(10, 200),
+    inclusive = c(TRUE, TRUE),
+    trans = NULL,
+    label = c(js_param = "number of level 2 units"),
+    finalize = NULL
+  )
+
+intx_param <- 
+  new_quant_param(
+    type = "integer",
+    range = c(-3, 3),
+    inclusive = c(TRUE, TRUE),
+    trans = NULL,
+    label = c(intx_param = "interaction values"),
+    finalize = NULL
+  )
+```
+
+```{r}
+parameter_grid <- 
+  grid_max_entropy(
+  ns_param, 
+  js_param, 
+  intx_param,
+  size = 100,
+  original = FALSE)
+```
+
+```{r}
+## make 100 data sets with a space filling design to cover all of these
+sim_dat <-
+  pmap(
+    list(
+      parameter_grid$ns_param, 
+      parameter_grid$js_param, 
+      parameter_grid$intx_param), 
+    ~simulate_two_level_interaction(
+      n = ..1, 
+      j = ..2, 
+      intercept_lv1 = 10.00, 
+      interaction = ..3,
+      main_x = 1.00, 
+      main_z = 2.00,
+      residual_var_sd_lv1 = 6.00,
+      random_int_mean_lv2 = 5, 
+      random_int_sd_lv2 = 2.00, 
+      start_seed = 123
+      )
+  )
+```
+
