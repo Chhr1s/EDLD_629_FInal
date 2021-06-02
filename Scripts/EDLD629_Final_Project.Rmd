@@ -28,85 +28,97 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 library(tidyverse)
-library(lme4)
-#library(equatiomatic)
-#library(sundry)
 library(glmertree)
-#library(simr)
 library(dials)
 source(here::here('Scripts', 'functions_EDLD629_Final.R'))
 ```
 
 ```{r}
-ns_param <- 
-  new_quant_param(
-    type = "integer",
-    range = c(20, 100),
-    inclusive = c(TRUE, TRUE),
-    trans = NULL,
-    label = c(ns_param = "number of level 1 units"),
-    finalize = NULL
-  )
+intx_values <- c(-1.25, -0.75, 0, 0.75, 1.25)
+```
 
-js_param <- 
-  new_quant_param(
-    type = "integer",
-    range = c(4, 10),
-    inclusive = c(TRUE, TRUE),
-    trans = NULL,
-    label = c(js_param = "number of level 2 units"),
-    finalize = NULL
-  )
+```{r cache = T}
+final_results <- 
+  make_final_results(
+    intx_values = intx_values, 
+    num_df = 1000, 
+    n_range = c(40, 200), 
+    j_range = c(3, 20), 
+    intercept_lv1 = 4.00, 
+    main_x = 1.25, 
+    main_z = 1.00,
+    residual_var_sd_lv1 = 6.00,
+    random_int_mean_lv2 = 5, 
+    random_int_sd_lv2 = 2.00
+    )
+```
 
-# intx_param <- 
-#   new_quant_param(
-#     type = "integer",
-#     range = c(-3, 3),
-#     inclusive = c(TRUE, TRUE),
-#     trans = NULL,
-#     label = c(intx_param = "interaction values"),
-#     finalize = NULL
-#   )
+```{r cache = T}
+ests <- extract_sim_ests(final_results)
+perf <- extract_sim_perfomance(final_results)
+fit_plots <- extract_sim_fit_plots(final_results)
+sim_density <- extract_sim_ests_density(final_results)
 ```
 
 ```{r}
-parameter_grid <- 
-  grid_max_entropy(
-  ns_param, 
-  js_param, 
-  size = 8,
-  original = FALSE)
+ests 
 ```
 
 ```{r}
-intx_values <- c(-2, -1, 0, 1, 2)
+ggpubr::ggarrange(
+  map(
+  map(
+    fit_plots, 
+    ~.x + 
+      labs(
+        x = NULL, 
+        y = NULL#, 
+        #caption = NULL
+        ) + 
+      theme_minimal(base_size = 20)
+  ),
+  ~.x
+  )
+)
 
-intx_value <- 2.00
 
-sim_dat <-
-  pmap(
-    list(
-      parameter_grid$ns_param, 
-      parameter_grid$js_param
-      #parameter_grid$intx_param
-      ), 
-    ~simulate_two_level_interaction(
-      n = ..1, 
-      j = ..2, 
-      intercept_lv1 = 10.00, 
-      interaction = intx_value,
-      main_x = 1.25, 
-      main_z = 1.00,
-      residual_var_sd_lv1 = 6.00,
-      random_int_mean_lv2 = 5, 
-      random_int_sd_lv2 = 2.00, 
-      start_seed = 123
-      )
+```
+
+```{r}
+ggpubr::ggarrange(
+  sim_density$`-1.25` + theme_minimal(base_size = 15),
+  sim_density$`-0.75` + theme_minimal(base_size = 15),
+  sim_density$`0` + theme_minimal(base_size = 15), 
+  sim_density$`0.75` + theme_minimal(base_size = 15),
+  sim_density$`1.25` + theme_minimal(base_size = 15),
+  common.legend = T, 
+  legend = 'bottom', 
+  ncol = 1, 
   )
 ```
 
 ```{r}
-test <- compare_mods(sim_dat, 2.00)
+ggpubr::ggarrange(
+  fit_plots$`-1.25` + theme_minimal(base_size = 15),
+  fit_plots$`-0.75` + theme_minimal(base_size = 15),
+  fit_plots$`0` + theme_minimal(base_size = 15), 
+  fit_plots$`0.75` + theme_minimal(base_size = 15),
+  fit_plots$`1.25` + theme_minimal(base_size = 15),
+  common.legend = T, 
+  legend = 'bottom', 
+  ncol = 1
+  )
 ```
 
+
+```{r}
+map2_dfr(
+  .x = rep(as.character(intx_values), 2),
+  .y = c(rep('lmer', 5), rep('tree', 5)), 
+  ~c_intervals(final_results, intx_level = .x, which_model = .y)
+  ) %>% 
+  mutate(
+    model = c(rep('lmer', 5), rep('tree', 5)), 
+    intx_level = rep(intx_values, 2)) 
+```
 
