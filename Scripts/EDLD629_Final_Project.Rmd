@@ -61,30 +61,6 @@ sim_density <- extract_sim_ests_density(final_results)
 ```
 
 ```{r}
-ests 
-```
-
-```{r}
-ggpubr::ggarrange(
-  map(
-  map(
-    fit_plots, 
-    ~.x + 
-      labs(
-        x = NULL, 
-        y = NULL#, 
-        #caption = NULL
-        ) + 
-      theme_minimal(base_size = 20)
-  ),
-  ~.x
-  )
-)
-
-
-```
-
-```{r}
 ggpubr::ggarrange(
   sim_density$`-1.25` + theme_minimal(base_size = 15),
   sim_density$`-0.75` + theme_minimal(base_size = 15),
@@ -109,7 +85,6 @@ ggpubr::ggarrange(
   ncol = 1
   )
 ```
-
 
 ```{r}
 map2_dfr(
